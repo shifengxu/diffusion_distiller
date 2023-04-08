@@ -9,18 +9,21 @@ def make_diffusion(model, n_timestep, time_scale, device):
     return GaussianDiffusion(model, betas, time_scale=time_scale)
 
 
-def make_beta_schedule(
-        schedule, n_timestep, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3
-):
+def make_beta_schedule(schedule, n_timestep, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):
+    print(f"make_beta_schedule()...")
+    print(f"  schedule  : {schedule}")
+    print(f"  n_timestep: {n_timestep}")
+    print(f"  cosine_s  : {cosine_s}")
+    t2s = lambda t:  ' '.join([f"{f:.6f}" for f in t])  # tensor to string
     if schedule == "cosine":
-        timesteps = (
-                torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
-        )
+        timesteps = torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
         alphas = timesteps / (1 + cosine_s) * math.pi / 2
         alphas = torch.cos(alphas).pow(2)
         alphas = alphas / alphas[0]
+        print(f"  alpha_bar: {t2s(alphas)}")
         betas = 1 - alphas[1:] / alphas[:-1]
         betas = betas.clamp(max=0.999)
+        print(f"  betas    : {t2s(betas)}")
     else:
         raise Exception()
     return betas
@@ -50,16 +53,22 @@ class GaussianDiffusion:
         self.time_scale = time_scale
         betas = betas.type(torch.float64)
         self.num_timesteps = int(betas.shape[0])
+        print(f"GaussianDiffusion()")
+        print(f"  time_scale : {time_scale}")
+        print(f"  sampler    : {sampler}")
 
         alphas = 1 - betas
         alphas_cumprod = torch.cumprod(alphas, 0)
-        alphas_cumprod_prev = torch.cat(
-            (torch.tensor([1], dtype=torch.float64, device=betas.device), alphas_cumprod[:-1]), 0
-        )
+        tensor_1 = torch.tensor([1], dtype=torch.float64, device=betas.device)
+        alphas_cumprod_prev = torch.cat((tensor_1, alphas_cumprod[:-1]), 0)
         posterior_variance = betas * (1 - alphas_cumprod_prev) / (1 - alphas_cumprod)
 
         self.betas = betas
         self.alphas_cumprod = alphas_cumprod
+        t2s = lambda t: ' '.join([f"{f:.6f}" for f in t])  # tensor to string
+        print(f"  betas.shape   : {betas.shape}")
+        print(f"  betas         : {t2s(betas)}")
+        print(f"  alphas_cumprod: {t2s(alphas_cumprod)}")
         self.posterior_variance = posterior_variance
         self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1 - alphas_cumprod)
@@ -112,24 +121,26 @@ class GaussianDiffusion:
         alpha, sigma = self.get_alpha_sigma(x, t)
         # if clip_denoised:
         #     x = x.clip(-1, 1)
-        pred = (x * alpha - v * sigma)
+        x_0 = (x * alpha - v * sigma)
         if clip_denoised:
-            pred = pred.clip(-clip_value, clip_value)
-        eps = (x - alpha * pred) / sigma
+            x_0 = x_0.clip(-clip_value, clip_value)
+        eps = (x - alpha * x_0) / sigma
         if clip_denoised:
             eps = eps.clip(-clip_value, clip_value)
 
+        pred = x_0
         t_mask = (t > 0)
         if t_mask.any().item():
             if not t_mask.all().item():
                 raise Exception()
             alpha_, sigma_ = self.get_alpha_sigma(x, (t - 1).clip(min=0))
-            ddim_sigma = eta * (sigma_ ** 2 / sigma ** 2).sqrt() * \
-                         (1 - alpha ** 2 / alpha_ ** 2).sqrt()
-            adjusted_sigma = (sigma_ ** 2 - ddim_sigma ** 2).sqrt()
-            pred = pred * alpha_ + eps * adjusted_sigma
             if eta:
+                ddim_sigma = eta * (sigma_ ** 2 / sigma ** 2).sqrt() * (1 - alpha ** 2 / alpha_ ** 2).sqrt()
+                adjusted_sigma = (sigma_ ** 2 - ddim_sigma ** 2).sqrt()
+                pred = pred * alpha_ + eps * adjusted_sigma
                 pred += torch.randn_like(pred) * ddim_sigma
+            else:
+                pred = pred * alpha_ + eps * sigma_
         return pred
 
     @torch.no_grad()
